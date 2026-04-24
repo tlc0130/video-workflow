@@ -61,7 +61,7 @@ Set values for:
 ### 4) Run once
 
 ```bash
-python -m src.workflow --config config.json --run-once
+python -m src.workflow --config config.json --run-once --dry-run
 ```
 
 ### 5) Schedule automation
@@ -104,7 +104,7 @@ If your question is "what do I do from here?", do these in order:
 3. **Copy `config.example.json` to `config.json` and fill all placeholders.**
 4. **Install FFmpeg and Python dependencies.**
 5. **Run one local test**
-   - `python -m src.workflow --config config.json --run-once`
+   - `python -m src.workflow --config config.json --run-once --dry-run`
 6. **Verify output manually**
    - Check generated video quality, caption timing, title/description, and policy compliance.
 7. **Enable one platform first**
@@ -135,3 +135,14 @@ pytest -q
 ```
 
 A GitHub Actions workflow is included at `.github/workflows/ci.yml` and runs tests on every push and pull request.
+
+## Recommended additions now included
+
+The workflow now includes:
+
+- **Config validation**: fails fast when required keys are missing.
+- **Dry-run mode**: generate script/video without uploading (`--dry-run`).
+- **Upload retries**: transient TikTok upload errors are retried with backoff-like delay.
+
+When you are ready to publish for real, run without `--dry-run`.
+

@@ -29,5 +29,9 @@
     "enabled": true,
     "access_token": "YOUR_TIKTOK_ACCESS_TOKEN",
     "privacy_level": "PUBLIC_TO_EVERYONE"
+  },
+  "runtime": {
+    "upload_retries": 2,
+    "retry_delay_seconds": 2.0
   }
 }

@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from src import workflow
 
@@ -79,3 +82,62 @@ def test_compose_video_writes_expected_output_path(monkeypatch, tmp_path):
     assert video_path.exists()
     assert video_path.suffix == ".mp4"
     assert any("color=c=#000000:s=1080x1920:r=30:d=10" in str(part) for part in calls[0])
+
+
+def test_validate_config_raises_on_missing_top_level_key():
+    with pytest.raises(ValueError, match="topic_prompt"):
+        workflow.validate_config({})
+
+
+def test_run_once_dry_run_skips_uploads(monkeypatch, tmp_path):
+    cfg = {
+        "topic_prompt": "test",
+        "video": {
+            "width": 1080,
+            "height": 1920,
+            "fps": 30,
+            "duration_seconds": 10,
+            "background_color": "#000000",
+            "title_prefix": "AutoClip",
+        },
+        "paths": {
+            "work_dir": str(tmp_path / "work"),
+            "output_dir": str(tmp_path / "out"),
+        },
+        "openai": {"api_key": "dummy", "model": "gpt-4o-mini"},
+        "youtube": {"enabled": True},
+        "tiktok": {"enabled": True},
+    }
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(cfg), encoding="utf-8")
+
+    def fake_generate_script(_cfg):
+        return "hello"
+
+    def fake_compose_video(_cfg, _script, work_dir, output_dir):
+        work_dir.mkdir(parents=True, exist_ok=True)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        audio = work_dir / "a.wav"
+        video = output_dir / "v.mp4"
+        audio.write_bytes(b"a")
+        video.write_bytes(b"v")
+        return audio, video
+
+    called = {"yt": 0, "tt": 0}
+
+    def fake_upload_yt(_cfg, _artifacts):
+        called["yt"] += 1
+
+    def fake_upload_tt(_cfg, _artifacts):
+        called["tt"] += 1
+
+    monkeypatch.setattr(workflow, "generate_script", fake_generate_script)
+    monkeypatch.setattr(workflow, "compose_video", fake_compose_video)
+    monkeypatch.setattr(workflow, "upload_youtube", fake_upload_yt)
+    monkeypatch.setattr(workflow, "upload_tiktok", fake_upload_tt)
+
+    artifacts = workflow.run_once(config_path, dry_run=True)
+
+    assert artifacts.video_path.exists()
+    assert called["yt"] == 0
+    assert called["tt"] == 0
