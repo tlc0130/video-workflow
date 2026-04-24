@@ -1,0 +1,33 @@
+{
+  "topic_prompt": "5 quick facts about space exploration",
+  "video": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "duration_seconds": 30,
+    "background_color": "#101820",
+    "title_prefix": "AutoClip"
+  },
+  "paths": {
+    "work_dir": "./.work",
+    "output_dir": "./output"
+  },
+  "openai": {
+    "api_key": "YOUR_OPENAI_API_KEY",
+    "model": "gpt-4o-mini"
+  },
+  "youtube": {
+    "enabled": true,
+    "client_secrets_file": "./secrets/youtube_client_secret.json",
+    "refresh_token": "YOUR_YOUTUBE_REFRESH_TOKEN",
+    "client_id": "YOUR_GOOGLE_CLIENT_ID",
+    "client_secret": "YOUR_GOOGLE_CLIENT_SECRET",
+    "category_id": "22",
+    "privacy_status": "public"
+  },
+  "tiktok": {
+    "enabled": true,
+    "access_token": "YOUR_TIKTOK_ACCESS_TOKEN",
+    "privacy_level": "PUBLIC_TO_EVERYONE"
+  }
+}
