@@ -190,14 +190,19 @@ def upload_youtube(cfg: dict, artifacts: RunArtifacts) -> None:
         "status": {"privacyStatus": yc.get("privacy_status", "public")},
     }
 
-    media = MediaFileUpload(str(artifacts.video_path), chunksize=-1, resumable=True)
-    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    retries = cfg.get("runtime", {}).get("upload_retries", 2)
+    delay = cfg.get("runtime", {}).get("retry_delay_seconds", 2.0)
 
-    response = None
-    while response is None:
-        _, response = request.next_chunk()
-        time.sleep(0.25)
+    def do_upload():
+        media = MediaFileUpload(str(artifacts.video_path), chunksize=-1, resumable=True)
+        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+        response = None
+        while response is None:
+            _, response = request.next_chunk()
+            time.sleep(0.25)
+        return response
 
+    response = retry(do_upload, retries=retries, delay_seconds=delay, op_name="YouTube upload")
     logger.info("YouTube upload completed. Video ID: %s", response.get("id"))
 
 

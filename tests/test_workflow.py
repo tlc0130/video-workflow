@@ -89,6 +89,70 @@ def test_validate_config_raises_on_missing_top_level_key():
         workflow.validate_config({})
 
 
+def test_upload_youtube_retries_on_failure(monkeypatch, tmp_path):
+    import sys
+    import types
+    import unittest.mock as mock
+
+    video_path = tmp_path / "v.mp4"
+    video_path.write_bytes(b"fake")
+
+    artifacts = workflow.RunArtifacts(
+        script_text="hello",
+        audio_path=tmp_path / "a.wav",
+        video_path=video_path,
+        title="Test",
+        description="Desc",
+    )
+
+    cfg = {
+        "youtube": {
+            "refresh_token": "r",
+            "client_id": "c",
+            "client_secret": "s",
+            "category_id": "22",
+            "privacy_status": "public",
+        },
+        "runtime": {"upload_retries": 2, "retry_delay_seconds": 0.0},
+    }
+
+    fake_creds = mock.MagicMock()
+    fake_youtube_svc = mock.MagicMock()
+    fake_youtube_svc.videos().insert().next_chunk.return_value = (None, {"id": "yt-video-id"})
+
+    oauth2_mod = types.ModuleType("google.oauth2.credentials")
+    oauth2_mod.Credentials = mock.MagicMock(return_value=fake_creds)
+    google_mod = types.ModuleType("google")
+    google_oauth2_mod = types.ModuleType("google.oauth2")
+    googleapiclient_mod = types.ModuleType("googleapiclient")
+    googleapiclient_discovery_mod = types.ModuleType("googleapiclient.discovery")
+    googleapiclient_discovery_mod.build = mock.MagicMock(return_value=fake_youtube_svc)
+    googleapiclient_http_mod = types.ModuleType("googleapiclient.http")
+    googleapiclient_http_mod.MediaFileUpload = mock.MagicMock()
+
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.oauth2", google_oauth2_mod)
+    monkeypatch.setitem(sys.modules, "google.oauth2.credentials", oauth2_mod)
+    monkeypatch.setitem(sys.modules, "googleapiclient", googleapiclient_mod)
+    monkeypatch.setitem(sys.modules, "googleapiclient.discovery", googleapiclient_discovery_mod)
+    monkeypatch.setitem(sys.modules, "googleapiclient.http", googleapiclient_http_mod)
+
+    retry_calls = []
+
+    def capturing_retry(op, retries, delay_seconds, op_name):
+        retry_calls.append({"retries": retries, "delay": delay_seconds, "name": op_name})
+        return op()
+
+    monkeypatch.setattr(workflow, "retry", capturing_retry)
+
+    workflow.upload_youtube(cfg, artifacts)
+
+    assert len(retry_calls) == 1
+    assert retry_calls[0]["retries"] == 2
+    assert retry_calls[0]["delay"] == 0.0
+    assert retry_calls[0]["name"] == "YouTube upload"
+
+
 def test_run_once_dry_run_skips_uploads(monkeypatch, tmp_path):
     cfg = {
         "topic_prompt": "test",
