@@ -65,7 +65,7 @@ def retry(operation: Callable[[], Any], retries: int, delay_seconds: float, op_n
             attempts += 1
             if attempts > retries:
                 raise
-            wait = delay_seconds * attempts
+            wait = delay_seconds * (2 ** (attempts - 1))
             logger.warning("%s failed (%s). Retrying in %.2fs (%d/%d)", op_name, exc, wait, attempts, retries)
             time.sleep(wait)
 

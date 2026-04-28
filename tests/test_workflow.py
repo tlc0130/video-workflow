@@ -6,6 +6,24 @@ import pytest
 from src import workflow
 
 
+def test_retry_uses_exponential_backoff(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(workflow.time, "sleep", sleeps.append)
+
+    attempt = {"n": 0}
+
+    def flaky():
+        attempt["n"] += 1
+        if attempt["n"] < 3:
+            raise OSError("boom")
+        return "ok"
+
+    result = workflow.retry(flaky, retries=3, delay_seconds=2.0, op_name="test")
+
+    assert result == "ok"
+    assert sleeps == [2.0, 4.0]
+
+
 def test_ensure_dirs_creates_paths(tmp_path):
     cfg = {
         "paths": {
