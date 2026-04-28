@@ -47,6 +47,15 @@ def validate_config(cfg: dict) -> None:
     if "api_key" not in cfg["openai"]:
         raise ValueError("Missing required openai config key: openai.api_key")
 
+    if cfg.get("youtube", {}).get("enabled"):
+        for key in ["refresh_token", "client_id", "client_secret"]:
+            if key not in cfg.get("youtube", {}):
+                raise ValueError(f"Missing required youtube config key: youtube.{key}")
+
+    if cfg.get("tiktok", {}).get("enabled"):
+        if "access_token" not in cfg.get("tiktok", {}):
+            raise ValueError("Missing required tiktok config key: tiktok.access_token")
+
 
 def ensure_dirs(cfg: dict) -> tuple[Path, Path]:
     work_dir = Path(cfg["paths"]["work_dir"]).resolve()

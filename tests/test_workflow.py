@@ -143,6 +143,42 @@ def test_validate_config_raises_on_missing_top_level_key():
         workflow.validate_config({})
 
 
+def test_validate_config_raises_on_missing_youtube_key():
+    cfg = {
+        "topic_prompt": "x",
+        "video": {"width": 1, "height": 1, "fps": 1, "duration_seconds": 1, "background_color": "#000"},
+        "paths": {"work_dir": "/tmp", "output_dir": "/tmp"},
+        "openai": {"api_key": "k"},
+        "youtube": {"enabled": True, "client_id": "c", "client_secret": "s"},
+    }
+    with pytest.raises(ValueError, match="youtube.refresh_token"):
+        workflow.validate_config(cfg)
+
+
+def test_validate_config_raises_on_missing_tiktok_key():
+    cfg = {
+        "topic_prompt": "x",
+        "video": {"width": 1, "height": 1, "fps": 1, "duration_seconds": 1, "background_color": "#000"},
+        "paths": {"work_dir": "/tmp", "output_dir": "/tmp"},
+        "openai": {"api_key": "k"},
+        "tiktok": {"enabled": True},
+    }
+    with pytest.raises(ValueError, match="tiktok.access_token"):
+        workflow.validate_config(cfg)
+
+
+def test_validate_config_skips_platform_checks_when_disabled():
+    cfg = {
+        "topic_prompt": "x",
+        "video": {"width": 1, "height": 1, "fps": 1, "duration_seconds": 1, "background_color": "#000"},
+        "paths": {"work_dir": "/tmp", "output_dir": "/tmp"},
+        "openai": {"api_key": "k"},
+        "youtube": {"enabled": False},
+        "tiktok": {"enabled": False},
+    }
+    workflow.validate_config(cfg)
+
+
 def test_upload_youtube_retries_on_failure(monkeypatch, tmp_path):
     import sys
     import types
@@ -223,8 +259,8 @@ def test_run_once_dry_run_skips_uploads(monkeypatch, tmp_path):
             "output_dir": str(tmp_path / "out"),
         },
         "openai": {"api_key": "dummy", "model": "gpt-4o-mini"},
-        "youtube": {"enabled": True},
-        "tiktok": {"enabled": True},
+        "youtube": {"enabled": True, "refresh_token": "r", "client_id": "c", "client_secret": "s"},
+        "tiktok": {"enabled": True, "access_token": "t"},
     }
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(cfg), encoding="utf-8")
