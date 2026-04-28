@@ -75,15 +75,21 @@ def generate_script(cfg: dict) -> str:
 
     client = OpenAI(api_key=cfg["openai"]["api_key"])
     prompt = cfg["topic_prompt"]
-    response = client.responses.create(
-        model=cfg["openai"].get("model", "gpt-4o-mini"),
-        input=(
-            "Write a short, engaging script for a vertical short-form video. "
-            "Keep it under 85 words, hook in first sentence, and end with a CTA. "
-            f"Topic: {prompt}"
-        ),
-    )
-    return response.output_text.strip()
+    retries = cfg.get("runtime", {}).get("upload_retries", 2)
+    delay = cfg.get("runtime", {}).get("retry_delay_seconds", 2.0)
+
+    def call_api():
+        response = client.responses.create(
+            model=cfg["openai"].get("model", "gpt-4o-mini"),
+            input=(
+                "Write a short, engaging script for a vertical short-form video. "
+                "Keep it under 85 words, hook in first sentence, and end with a CTA. "
+                f"Topic: {prompt}"
+            ),
+        )
+        return response.output_text.strip()
+
+    return retry(call_api, retries=retries, delay_seconds=delay, op_name="generate_script")
 
 
 def write_subtitle_file(script_text: str, subtitle_path: Path, duration: int) -> None:

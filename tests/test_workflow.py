@@ -6,6 +6,42 @@ import pytest
 from src import workflow
 
 
+def test_generate_script_retries_on_failure(monkeypatch):
+    import sys
+    import types
+    import unittest.mock as mock
+
+    attempt = {"n": 0}
+
+    fake_response = mock.MagicMock()
+    fake_response.output_text = "  great script  "
+
+    def fake_create(**kwargs):
+        attempt["n"] += 1
+        if attempt["n"] < 2:
+            raise OSError("transient")
+        return fake_response
+
+    fake_client = mock.MagicMock()
+    fake_client.responses.create.side_effect = fake_create
+    fake_openai_mod = types.ModuleType("openai")
+    fake_openai_mod.OpenAI = mock.MagicMock(return_value=fake_client)
+    monkeypatch.setitem(sys.modules, "openai", fake_openai_mod)
+
+    monkeypatch.setattr(workflow.time, "sleep", lambda _: None)
+
+    cfg = {
+        "topic_prompt": "space facts",
+        "openai": {"api_key": "k", "model": "gpt-4o-mini"},
+        "runtime": {"upload_retries": 3, "retry_delay_seconds": 0.0},
+    }
+
+    result = workflow.generate_script(cfg)
+
+    assert result == "great script"
+    assert attempt["n"] == 2
+
+
 def test_retry_uses_exponential_backoff(monkeypatch):
     sleeps = []
     monkeypatch.setattr(workflow.time, "sleep", sleeps.append)
