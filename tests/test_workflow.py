@@ -295,3 +295,43 @@ def test_run_once_dry_run_skips_uploads(monkeypatch, tmp_path):
     assert artifacts.video_path.exists()
     assert called["yt"] == 0
     assert called["tt"] == 0
+
+
+def test_run_scheduled_calls_run_once_repeatedly(monkeypatch):
+    run_count = {"n": 0}
+
+    def fake_run_once(_path, dry_run=False):
+        run_count["n"] += 1
+        if run_count["n"] >= 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(workflow, "run_once", fake_run_once)
+    monkeypatch.setattr(workflow.time, "sleep", lambda _: None)
+
+    try:
+        workflow.run_scheduled(Path("/fake/config.json"), interval_seconds=60)
+    except KeyboardInterrupt:
+        pass
+
+    assert run_count["n"] == 3
+
+
+def test_run_scheduled_continues_after_failed_run(monkeypatch):
+    run_count = {"n": 0}
+
+    def fake_run_once(_path, dry_run=False):
+        run_count["n"] += 1
+        if run_count["n"] == 1:
+            raise RuntimeError("transient failure")
+        if run_count["n"] >= 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(workflow, "run_once", fake_run_once)
+    monkeypatch.setattr(workflow.time, "sleep", lambda _: None)
+
+    try:
+        workflow.run_scheduled(Path("/fake/config.json"), interval_seconds=60)
+    except KeyboardInterrupt:
+        pass
+
+    assert run_count["n"] == 3

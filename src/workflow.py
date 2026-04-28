@@ -311,20 +311,38 @@ def run_once(config_path: Path, dry_run: bool = False) -> RunArtifacts:
     return artifacts
 
 
+def run_scheduled(config_path: Path, interval_seconds: int, dry_run: bool = False) -> None:
+    logger.info("Scheduler started. Interval: %ds. Press Ctrl+C to stop.", interval_seconds)
+    while True:
+        try:
+            run_once(config_path, dry_run=dry_run)
+        except Exception as exc:
+            logger.error("Run failed: %s", exc)
+        logger.info("Next run in %ds.", interval_seconds)
+        time.sleep(interval_seconds)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Automated short-video workflow")
     parser.add_argument("--config", required=True, help="Path to config.json")
     parser.add_argument("--run-once", action="store_true", help="Run one end-to-end execution")
+    parser.add_argument("--schedule", type=int, metavar="SECONDS", help="Run repeatedly on an interval")
     parser.add_argument("--dry-run", action="store_true", help="Generate assets but do not upload")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    config_path = Path(args.config).resolve()
     if args.run_once:
-        run_once(Path(args.config).resolve(), dry_run=args.dry_run)
+        run_once(config_path, dry_run=args.dry_run)
+    elif args.schedule:
+        try:
+            run_scheduled(config_path, args.schedule, dry_run=args.dry_run)
+        except KeyboardInterrupt:
+            logger.info("Scheduler stopped.")
     else:
-        raise SystemExit("Only --run-once is currently implemented.")
+        raise SystemExit("Specify --run-once or --schedule SECONDS.")
 
 
 if __name__ == "__main__":
