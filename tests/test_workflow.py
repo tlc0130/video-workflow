@@ -6,6 +6,60 @@ import pytest
 from src import workflow
 
 
+def test_generate_script_retries_on_failure(monkeypatch):
+    import sys
+    import types
+    import unittest.mock as mock
+
+    attempt = {"n": 0}
+
+    fake_response = mock.MagicMock()
+    fake_response.output_text = "  great script  "
+
+    def fake_create(**kwargs):
+        attempt["n"] += 1
+        if attempt["n"] < 2:
+            raise OSError("transient")
+        return fake_response
+
+    fake_client = mock.MagicMock()
+    fake_client.responses.create.side_effect = fake_create
+    fake_openai_mod = types.ModuleType("openai")
+    fake_openai_mod.OpenAI = mock.MagicMock(return_value=fake_client)
+    monkeypatch.setitem(sys.modules, "openai", fake_openai_mod)
+
+    monkeypatch.setattr(workflow.time, "sleep", lambda _: None)
+
+    cfg = {
+        "topic_prompt": "space facts",
+        "openai": {"api_key": "k", "model": "gpt-4o-mini"},
+        "runtime": {"upload_retries": 3, "retry_delay_seconds": 0.0},
+    }
+
+    result = workflow.generate_script(cfg)
+
+    assert result == "great script"
+    assert attempt["n"] == 2
+
+
+def test_retry_uses_exponential_backoff(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(workflow.time, "sleep", sleeps.append)
+
+    attempt = {"n": 0}
+
+    def flaky():
+        attempt["n"] += 1
+        if attempt["n"] < 3:
+            raise OSError("boom")
+        return "ok"
+
+    result = workflow.retry(flaky, retries=3, delay_seconds=2.0, op_name="test")
+
+    assert result == "ok"
+    assert sleeps == [2.0, 4.0]
+
+
 def test_ensure_dirs_creates_paths(tmp_path):
     cfg = {
         "paths": {
@@ -89,6 +143,106 @@ def test_validate_config_raises_on_missing_top_level_key():
         workflow.validate_config({})
 
 
+def test_validate_config_raises_on_missing_youtube_key():
+    cfg = {
+        "topic_prompt": "x",
+        "video": {"width": 1, "height": 1, "fps": 1, "duration_seconds": 1, "background_color": "#000"},
+        "paths": {"work_dir": "/tmp", "output_dir": "/tmp"},
+        "openai": {"api_key": "k"},
+        "youtube": {"enabled": True, "client_id": "c", "client_secret": "s"},
+    }
+    with pytest.raises(ValueError, match="youtube.refresh_token"):
+        workflow.validate_config(cfg)
+
+
+def test_validate_config_raises_on_missing_tiktok_key():
+    cfg = {
+        "topic_prompt": "x",
+        "video": {"width": 1, "height": 1, "fps": 1, "duration_seconds": 1, "background_color": "#000"},
+        "paths": {"work_dir": "/tmp", "output_dir": "/tmp"},
+        "openai": {"api_key": "k"},
+        "tiktok": {"enabled": True},
+    }
+    with pytest.raises(ValueError, match="tiktok.access_token"):
+        workflow.validate_config(cfg)
+
+
+def test_validate_config_skips_platform_checks_when_disabled():
+    cfg = {
+        "topic_prompt": "x",
+        "video": {"width": 1, "height": 1, "fps": 1, "duration_seconds": 1, "background_color": "#000"},
+        "paths": {"work_dir": "/tmp", "output_dir": "/tmp"},
+        "openai": {"api_key": "k"},
+        "youtube": {"enabled": False},
+        "tiktok": {"enabled": False},
+    }
+    workflow.validate_config(cfg)
+
+
+def test_upload_youtube_retries_on_failure(monkeypatch, tmp_path):
+    import sys
+    import types
+    import unittest.mock as mock
+
+    video_path = tmp_path / "v.mp4"
+    video_path.write_bytes(b"fake")
+
+    artifacts = workflow.RunArtifacts(
+        script_text="hello",
+        audio_path=tmp_path / "a.wav",
+        video_path=video_path,
+        title="Test",
+        description="Desc",
+    )
+
+    cfg = {
+        "youtube": {
+            "refresh_token": "r",
+            "client_id": "c",
+            "client_secret": "s",
+            "category_id": "22",
+            "privacy_status": "public",
+        },
+        "runtime": {"upload_retries": 2, "retry_delay_seconds": 0.0},
+    }
+
+    fake_creds = mock.MagicMock()
+    fake_youtube_svc = mock.MagicMock()
+    fake_youtube_svc.videos().insert().next_chunk.return_value = (None, {"id": "yt-video-id"})
+
+    oauth2_mod = types.ModuleType("google.oauth2.credentials")
+    oauth2_mod.Credentials = mock.MagicMock(return_value=fake_creds)
+    google_mod = types.ModuleType("google")
+    google_oauth2_mod = types.ModuleType("google.oauth2")
+    googleapiclient_mod = types.ModuleType("googleapiclient")
+    googleapiclient_discovery_mod = types.ModuleType("googleapiclient.discovery")
+    googleapiclient_discovery_mod.build = mock.MagicMock(return_value=fake_youtube_svc)
+    googleapiclient_http_mod = types.ModuleType("googleapiclient.http")
+    googleapiclient_http_mod.MediaFileUpload = mock.MagicMock()
+
+    monkeypatch.setitem(sys.modules, "google", google_mod)
+    monkeypatch.setitem(sys.modules, "google.oauth2", google_oauth2_mod)
+    monkeypatch.setitem(sys.modules, "google.oauth2.credentials", oauth2_mod)
+    monkeypatch.setitem(sys.modules, "googleapiclient", googleapiclient_mod)
+    monkeypatch.setitem(sys.modules, "googleapiclient.discovery", googleapiclient_discovery_mod)
+    monkeypatch.setitem(sys.modules, "googleapiclient.http", googleapiclient_http_mod)
+
+    retry_calls = []
+
+    def capturing_retry(op, retries, delay_seconds, op_name):
+        retry_calls.append({"retries": retries, "delay": delay_seconds, "name": op_name})
+        return op()
+
+    monkeypatch.setattr(workflow, "retry", capturing_retry)
+
+    workflow.upload_youtube(cfg, artifacts)
+
+    assert len(retry_calls) == 1
+    assert retry_calls[0]["retries"] == 2
+    assert retry_calls[0]["delay"] == 0.0
+    assert retry_calls[0]["name"] == "YouTube upload"
+
+
 def test_run_once_dry_run_skips_uploads(monkeypatch, tmp_path):
     cfg = {
         "topic_prompt": "test",
@@ -105,8 +259,8 @@ def test_run_once_dry_run_skips_uploads(monkeypatch, tmp_path):
             "output_dir": str(tmp_path / "out"),
         },
         "openai": {"api_key": "dummy", "model": "gpt-4o-mini"},
-        "youtube": {"enabled": True},
-        "tiktok": {"enabled": True},
+        "youtube": {"enabled": True, "refresh_token": "r", "client_id": "c", "client_secret": "s"},
+        "tiktok": {"enabled": True, "access_token": "t"},
     }
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps(cfg), encoding="utf-8")
@@ -141,3 +295,43 @@ def test_run_once_dry_run_skips_uploads(monkeypatch, tmp_path):
     assert artifacts.video_path.exists()
     assert called["yt"] == 0
     assert called["tt"] == 0
+
+
+def test_run_scheduled_calls_run_once_repeatedly(monkeypatch):
+    run_count = {"n": 0}
+
+    def fake_run_once(_path, dry_run=False):
+        run_count["n"] += 1
+        if run_count["n"] >= 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(workflow, "run_once", fake_run_once)
+    monkeypatch.setattr(workflow.time, "sleep", lambda _: None)
+
+    try:
+        workflow.run_scheduled(Path("/fake/config.json"), interval_seconds=60)
+    except KeyboardInterrupt:
+        pass
+
+    assert run_count["n"] == 3
+
+
+def test_run_scheduled_continues_after_failed_run(monkeypatch):
+    run_count = {"n": 0}
+
+    def fake_run_once(_path, dry_run=False):
+        run_count["n"] += 1
+        if run_count["n"] == 1:
+            raise RuntimeError("transient failure")
+        if run_count["n"] >= 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(workflow, "run_once", fake_run_once)
+    monkeypatch.setattr(workflow.time, "sleep", lambda _: None)
+
+    try:
+        workflow.run_scheduled(Path("/fake/config.json"), interval_seconds=60)
+    except KeyboardInterrupt:
+        pass
+
+    assert run_count["n"] == 3

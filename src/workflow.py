@@ -47,6 +47,15 @@ def validate_config(cfg: dict) -> None:
     if "api_key" not in cfg["openai"]:
         raise ValueError("Missing required openai config key: openai.api_key")
 
+    if cfg.get("youtube", {}).get("enabled"):
+        for key in ["refresh_token", "client_id", "client_secret"]:
+            if key not in cfg.get("youtube", {}):
+                raise ValueError(f"Missing required youtube config key: youtube.{key}")
+
+    if cfg.get("tiktok", {}).get("enabled"):
+        if "access_token" not in cfg.get("tiktok", {}):
+            raise ValueError("Missing required tiktok config key: tiktok.access_token")
+
 
 def ensure_dirs(cfg: dict) -> tuple[Path, Path]:
     work_dir = Path(cfg["paths"]["work_dir"]).resolve()
@@ -65,7 +74,7 @@ def retry(operation: Callable[[], Any], retries: int, delay_seconds: float, op_n
             attempts += 1
             if attempts > retries:
                 raise
-            wait = delay_seconds * attempts
+            wait = delay_seconds * (2 ** (attempts - 1))
             logger.warning("%s failed (%s). Retrying in %.2fs (%d/%d)", op_name, exc, wait, attempts, retries)
             time.sleep(wait)
 
@@ -75,15 +84,21 @@ def generate_script(cfg: dict) -> str:
 
     client = OpenAI(api_key=cfg["openai"]["api_key"])
     prompt = cfg["topic_prompt"]
-    response = client.responses.create(
-        model=cfg["openai"].get("model", "gpt-4o-mini"),
-        input=(
-            "Write a short, engaging script for a vertical short-form video. "
-            "Keep it under 85 words, hook in first sentence, and end with a CTA. "
-            f"Topic: {prompt}"
-        ),
-    )
-    return response.output_text.strip()
+    retries = cfg.get("runtime", {}).get("upload_retries", 2)
+    delay = cfg.get("runtime", {}).get("retry_delay_seconds", 2.0)
+
+    def call_api():
+        response = client.responses.create(
+            model=cfg["openai"].get("model", "gpt-4o-mini"),
+            input=(
+                "Write a short, engaging script for a vertical short-form video. "
+                "Keep it under 85 words, hook in first sentence, and end with a CTA. "
+                f"Topic: {prompt}"
+            ),
+        )
+        return response.output_text.strip()
+
+    return retry(call_api, retries=retries, delay_seconds=delay, op_name="generate_script")
 
 
 def write_subtitle_file(script_text: str, subtitle_path: Path, duration: int) -> None:
@@ -190,14 +205,19 @@ def upload_youtube(cfg: dict, artifacts: RunArtifacts) -> None:
         "status": {"privacyStatus": yc.get("privacy_status", "public")},
     }
 
-    media = MediaFileUpload(str(artifacts.video_path), chunksize=-1, resumable=True)
-    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+    retries = cfg.get("runtime", {}).get("upload_retries", 2)
+    delay = cfg.get("runtime", {}).get("retry_delay_seconds", 2.0)
 
-    response = None
-    while response is None:
-        _, response = request.next_chunk()
-        time.sleep(0.25)
+    def do_upload():
+        media = MediaFileUpload(str(artifacts.video_path), chunksize=-1, resumable=True)
+        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+        response = None
+        while response is None:
+            _, response = request.next_chunk()
+            time.sleep(0.25)
+        return response
 
+    response = retry(do_upload, retries=retries, delay_seconds=delay, op_name="YouTube upload")
     logger.info("YouTube upload completed. Video ID: %s", response.get("id"))
 
 
@@ -291,20 +311,38 @@ def run_once(config_path: Path, dry_run: bool = False) -> RunArtifacts:
     return artifacts
 
 
+def run_scheduled(config_path: Path, interval_seconds: int, dry_run: bool = False) -> None:
+    logger.info("Scheduler started. Interval: %ds. Press Ctrl+C to stop.", interval_seconds)
+    while True:
+        try:
+            run_once(config_path, dry_run=dry_run)
+        except Exception as exc:
+            logger.error("Run failed: %s", exc)
+        logger.info("Next run in %ds.", interval_seconds)
+        time.sleep(interval_seconds)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Automated short-video workflow")
     parser.add_argument("--config", required=True, help="Path to config.json")
     parser.add_argument("--run-once", action="store_true", help="Run one end-to-end execution")
+    parser.add_argument("--schedule", type=int, metavar="SECONDS", help="Run repeatedly on an interval")
     parser.add_argument("--dry-run", action="store_true", help="Generate assets but do not upload")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    config_path = Path(args.config).resolve()
     if args.run_once:
-        run_once(Path(args.config).resolve(), dry_run=args.dry_run)
+        run_once(config_path, dry_run=args.dry_run)
+    elif args.schedule:
+        try:
+            run_scheduled(config_path, args.schedule, dry_run=args.dry_run)
+        except KeyboardInterrupt:
+            logger.info("Scheduler stopped.")
     else:
-        raise SystemExit("Only --run-once is currently implemented.")
+        raise SystemExit("Specify --run-once or --schedule SECONDS.")
 
 
 if __name__ == "__main__":
