@@ -122,6 +122,14 @@ def write_subtitle_file(script_text: str, subtitle_path: Path, duration: int) ->
             current = end
 
 
+def run_subprocess(cmd: list) -> None:
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        logger.error("Command failed (exit %d): %s\n%s", exc.returncode, " ".join(cmd), exc.stderr.decode(errors="replace"))
+        raise
+
+
 def generate_silent_audio(audio_path: Path, duration: int) -> None:
     cmd = [
         "ffmpeg",
@@ -134,7 +142,7 @@ def generate_silent_audio(audio_path: Path, duration: int) -> None:
         str(duration),
         str(audio_path),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    run_subprocess(cmd)
 
 
 def compose_video(cfg: dict, script_text: str, work_dir: Path, output_dir: Path) -> tuple[Path, Path]:
@@ -176,7 +184,7 @@ def compose_video(cfg: dict, script_text: str, work_dir: Path, output_dir: Path)
         "aac",
         str(video_path),
     ]
-    subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
+    run_subprocess(ffmpeg_cmd)
     return audio_path, video_path
 
 

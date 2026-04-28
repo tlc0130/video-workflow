@@ -138,6 +138,20 @@ def test_compose_video_writes_expected_output_path(monkeypatch, tmp_path):
     assert any("color=c=#000000:s=1080x1920:r=30:d=10" in str(part) for part in calls[0])
 
 
+def test_run_subprocess_logs_and_reraises_on_failure(monkeypatch):
+    logged = []
+    monkeypatch.setattr(workflow.logger, "error", lambda *a, **kw: logged.append(a))
+
+    error = workflow.subprocess.CalledProcessError(1, ["ffmpeg"], stderr=b"bad filter\n")
+    monkeypatch.setattr(workflow.subprocess, "run", lambda *a, **kw: (_ for _ in ()).throw(error))
+
+    with pytest.raises(workflow.subprocess.CalledProcessError):
+        workflow.run_subprocess(["ffmpeg", "-version"])
+
+    assert logged, "Expected an error to be logged"
+    assert "bad filter" in str(logged[0])
+
+
 def test_validate_config_raises_on_missing_top_level_key():
     with pytest.raises(ValueError, match="topic_prompt"):
         workflow.validate_config({})
